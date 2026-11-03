@@ -43,7 +43,7 @@
   select{cursor:pointer}
   select:focus,input:focus{border-color:var(--red);box-shadow:0 0 0 4px var(--red-50)}
   select:disabled{background:#f8f8f9;color:var(--ink-3);cursor:not-allowed}
-  .stats{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:22px}
+  .stats{display:grid;grid-template-columns:repeat(2,1fr);gap:10px;margin-top:22px}
   .stat{background:var(--bg);border-radius:12px;padding:14px 8px;text-align:center}
   .stat b{display:block;font-size:26px;font-weight:800;color:var(--red);line-height:1.15}
   .stat span{font-size:13.5px;color:var(--ink-2);font-weight:600}
@@ -156,12 +156,11 @@
       <select id="selKec"><option value="">— Semua Kecamatan —</option></select>
       <label class="f" for="selDesa">Desa / Kelurahan</label>
       <select id="selDesa" disabled><option value="">— Pilih kecamatan dahulu —</option></select>
-      <label class="f" for="q">Cari desa / TPS</label>
-      <input type="search" id="q" placeholder="mis. Widoro TPS 1">
+      <label class="f" for="q">Cari kecamatan / desa</label>
+      <input type="search" id="q" placeholder="mis. Widoro">
       <div class="stats">
         <div class="stat"><b id="stKec">–</b><span>Kecamatan</span></div>
         <div class="stat"><b id="stDesa">–</b><span>Desa/Kel</span></div>
-        <div class="stat"><b id="stFile">–</b><span>TPS</span></div>
       </div>
       <div class="meta" id="meta"></div>
     </aside>
@@ -287,9 +286,10 @@ function parseWilayah(name, parentName){
   return {kec:'', desa:'', tps, ok:false};
 }
 
-const TAK = 'TIDAK DIKENALI';
+const TAK = 'TIDAK DIKENALI';            // kunci internal (sama dengan Code.gs)
+const TAK_LABEL = 'REKAPITULASI DPT PEMILU TAHUN 2024';          // nama yang ditampilkan
 /* Susun file menjadi Kecamatan → Desa/Kelurahan → TPS sesuai daftar WILAYAH.
-   Semua 172 desa/kelurahan tetap tampil (yang belum ada file-nya bertanda 0 TPS). */
+   Semua 172 desa/kelurahan tetap tampil (yang belum ada file-nya ditandai). */
 function buildVirtual(raw){
   const kecMap = new Map();
   Object.keys(WILAYAH).forEach(k=>{ const dm=new Map(); WILAYAH[k].forEach(d=>dm.set(d,[])); kecMap.set(k,dm); });
@@ -311,6 +311,12 @@ function buildVirtual(raw){
   const root = node('root', APP_LABEL, [], []);
   root.builtAt = raw.builtAt; root.driveId = raw.i || ROOT_ID; root.unknown = unknown;
   for(const [kec, dm] of kecMap){
+    if(kec===TAK){                          // file di luar daftar wilayah: satu kelompok, langsung berisi file
+      const files=[].concat(...dm.values()).sort((a,b)=>coll.compare(a.n,b.n));
+      if(!files.length) continue;
+      const k = node('k|'+TAK, TAK_LABEL, [], files); k.kec = TAK; k.other = true;
+      root.f.push(k); continue;
+    }
     const k = node('k|'+kec, kec, [], []); k.kec = kec;
     for(const [desa, files] of dm){
       const d = node('d|'+kec+'|'+desa, desa, [], files.sort((a,b)=>coll.compare(a.tps,b.tps)||coll.compare(a.n,b.n)));
@@ -320,7 +326,7 @@ function buildVirtual(raw){
   }
   return finish(root);
 }
-function byName(a,b){ return (a.n===TAK)-(b.n===TAK) || coll.compare(a.n,b.n); }
+function byName(a,b){ return (!!a.other)-(!!b.other) || coll.compare(a.n,b.n); }
 function finish(n){
   n.f.sort(byName);
   n.f.forEach(finish);
@@ -345,7 +351,7 @@ function setRaw(raw){ st.raw = raw; st.tree = buildVirtual(raw); }
 
 async function loadAll(refresh){
   $('banner').innerHTML='';
-  if(st.demo){ setRaw(demoTree()); if(st.tree.unknown.length) banner(`<b>${st.tree.unknown.length} file</b> tidak cocok dengan daftar kecamatan/desa dan dikelompokkan ke <b>${TAK}</b>. Contoh: ${st.tree.unknown.slice(0,3).map(esc).join(' · ')}`, true); banner('<b>Mode demo</b> — data contoh, bukan isi Drive sebenarnya. Isi URL Apps Script di Pengaturan untuk memakai data asli.'); fillKec(); render(); return; }
+  if(st.demo){ setRaw(demoTree()); warnUnknown(); banner('<b>Mode demo</b> — data contoh, bukan isi Drive sebenarnya. Isi URL Apps Script di Pengaturan untuk memakai data asli.'); fillKec(); render(); return; }
   if(!apiUrl()){ banner('Sumber data belum diatur. Klik <b>Pengaturan</b> untuk menempel URL Apps Script, atau coba <b>mode demo</b>.'); render(); return; }
   if(!refresh){ const c=lsGet(LS.tree); if(c){ try{ setRaw(JSON.parse(c)); fillKec(); render(); }catch(e){} } }
   if(!st.tree) renderLoading();
@@ -354,7 +360,7 @@ async function loadAll(refresh){
     lsSet(LS.tree, JSON.stringify(j.tree));
     setRaw(j.tree);
   }catch(e){ banner('Data gagal dimuat: '+esc(e.message)+'. Periksa URL Apps Script dan akses folder.', true); }
-  if(st.tree && st.tree.unknown.length) banner(`<b>${st.tree.unknown.length} file</b> tidak cocok dengan daftar kecamatan/desa dan dikelompokkan ke <b>${TAK}</b>. Contoh: ${st.tree.unknown.slice(0,3).map(esc).join(' · ')}`, true);
+  if(st.tree) warnUnknown();
   fillKec(); render();
 }
 
@@ -370,16 +376,15 @@ function syncSide(){
   const t=st.tree, sk=$('selKec'), sd=$('selDesa');
   sk.value = st.path[0]||'';
   const kec = t && st.path[0] ? t.f.find(x=>x.i===st.path[0]) : null;
-  if(kec){
+  if(kec && !kec.other){
     sd.disabled=false;
     sd.innerHTML = `<option value="">— Semua Desa/Kelurahan (${kec.f.length}) —</option>`+kec.f.map(d=>`<option value="${esc(d.i)}">${esc(d.n)}${d.cnt?'':' (belum ada file)'}</option>`).join('');
     sd.value = st.path[1]||'';
-  } else { sd.disabled=true; sd.innerHTML = '<option value="">— Pilih kecamatan dahulu —</option>'; }
+  } else { sd.disabled=true; sd.innerHTML = `<option value="">${kec?'— Tidak ada desa/kelurahan —':'— Pilih kecamatan dahulu —'}</option>`; }
   const cur = nodeAt(st.path) || t;
-  const real = x => x.n!==TAK;
+  const real = x => !x.other;
   $('stKec').textContent  = t ? t.f.filter(real).length : '–';
-  $('stDesa').textContent = t ? (kec ? kec.f.filter(real).length : t.f.filter(real).reduce((a,k)=>a+k.f.filter(real).length,0)) : '–';
-  $('stFile').textContent = t ? cur.cnt.toLocaleString('id-ID') : '–';
+  $('stDesa').textContent = t ? (kec&&kec.other ? '–' : kec ? kec.f.filter(real).length : t.f.filter(real).reduce((a,k)=>a+k.f.filter(real).length,0)) : '–';
   $('meta').innerHTML = t ? `Indeks diperbarui: ${fmtDate(t.builtAt)}<br>Sumber: folder Google Drive ${esc(APP_LABEL)}` : '';
 }
 $('selKec').onchange  = e=> go(e.target.value?[e.target.value]:[]);
@@ -405,7 +410,7 @@ function render(){
   }
   const node = nodeAt(st.path) || t;
   const parts=[{n:APP_LABEL,p:[]}]; let n=t;
-  st.path.forEach((id,i)=>{ n=n&&n.f.find(x=>x.i===id); if(n) parts.push({n:(i===0?'Kec. ':'')+n.n,p:st.path.slice(0,i+1)}); });
+  st.path.forEach((id,i)=>{ n=n&&n.f.find(x=>x.i===id); if(n) parts.push({n:(i===0&&!n.other?'Kec. ':'')+n.n,p:st.path.slice(0,i+1)}); });
   $('crumb').innerHTML = parts.map((p,i)=> (i?'<span class="sep">›</span>':'') +
     `<a class="${i===parts.length-1?'cur':''}" data-p="${esc(p.p.join('§'))}">${esc(p.n)}</a>`).join('');
 
@@ -418,17 +423,17 @@ function render(){
   let h='';
   if(node.f.length){
     const lvl = st.path.length===0 ? 'Kecamatan' : 'Desa / Kelurahan';
-    h += `<div class="sect"><h4>${lvl} (${node.f.length}) — klik untuk membuka</h4><div class="folders">`+
-      node.f.map(f=>`<div class="fold${f.cnt?'':' nil'}${f.n===TAK?' tak':''}" data-go="${esc(f.i)}"><div class="ic">${st.path.length===0?ICON_FOLDER:ICON_PIN}</div><div><div class="nm">${esc(f.n)}</div><div class="sb">${f.f.length?f.f.length+' desa/kel · ':''}${f.cnt} TPS</div></div></div>`).join('')+
+    h += `<div class="sect"><h4>${lvl} (${node.f.filter(x=>!x.other).length}) — klik untuk membuka</h4><div class="folders">`+
+      node.f.map(f=>`<div class="fold${f.cnt?'':' nil'}${f.other?' tak':''}" data-go="${esc(f.i)}"><div class="ic">${st.path.length===0?ICON_FOLDER:ICON_PIN}</div><div><div class="nm">${esc(f.n)}</div><div class="sb">${f.other?'Dokumen lainnya':f.f.length?f.f.length+' desa/kelurahan':f.cnt?'Kec. '+esc(f.kec):'Belum ada file'}</div></div></div>`).join('')+
       '</div></div>';
   }
-  if(node.d.length) h += fileTable(node.d.map(f=>({f})));
+  if(node.d.length) h += fileTable(node.d.map(f=>({f})), false, node.other);
   if(!h) h = emptyHtml('Tidak ada file','Belum ada file di bagian ini.');
   $('view').innerHTML = h;
 }
 
-function fileTable(rows, showPath){
-  return `<table><thead><tr><th class="no">No</th><th>TPS / Nama File</th><th class="sz">Ukuran</th><th style="text-align:right">Aksi</th></tr></thead><tbody>`+
+function fileTable(rows, showPath, other){
+  return `<table><thead><tr><th class="no">No</th><th>${other?'Nama File':'TPS / Nama File'}</th><th class="sz">Ukuran</th><th style="text-align:right">Aksi</th></tr></thead><tbody>`+
     rows.map((r,i)=>fileRow(r.f,i+1,showPath?r.path:'')).join('')+'</tbody></table>';
 }
 function fileRow(f,no,path){
@@ -461,9 +466,9 @@ function renderSearch(){
   })(node, st.path.slice());
   let h='';
   if(fol.length) h+=`<div class="sect"><h4>Wilayah cocok (${fol.length})</h4><div class="folders">`+
-    fol.slice(0,30).map(x=>`<div class="fold" data-gop="${esc(x.pid.join('§'))}"><div class="ic">${x.c.desa?ICON_PIN:ICON_FOLDER}</div><div><div class="nm">${esc(x.c.n)}</div><div class="sb">${x.c.desa?'Kec. '+esc(x.c.kec)+' · ':'Kecamatan · '}${x.c.cnt} TPS</div></div></div>`).join('')+'</div></div>';
+    fol.slice(0,30).map(x=>`<div class="fold" data-gop="${esc(x.pid.join('§'))}"><div class="ic">${x.c.desa?ICON_PIN:ICON_FOLDER}</div><div><div class="nm">${esc(x.c.n)}</div><div class="sb">${x.c.desa?'Desa/Kel · Kec. '+esc(x.c.kec):x.c.other?'Dokumen lainnya':'Kecamatan'}</div></div></div>`).join('')+'</div></div>';
   if(res.length) h+=`<div class="sect" style="padding-bottom:6px"><h4>File cocok (${res.length}${res.length>300?', ditampilkan 300':''})</h4></div>`+fileTable(res.slice(0,300), true);
-  $('view').innerHTML = h || emptyHtml('Tidak ditemukan',`Tidak ada desa/kelurahan atau TPS yang cocok dengan “${esc(st.q)}”.`);
+  $('view').innerHTML = h || emptyHtml('Tidak ditemukan',`Tidak ada kecamatan, desa/kelurahan, atau TPS yang cocok dengan “${esc(st.q)}”.`);
 }
 
 function emptyHtml(t,s){ return `<div class="empty"><svg width="56" height="56" viewBox="0 0 24 24" fill="currentColor"><path d="M10 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-8l-2-2z"/></svg><b>${t}</b>${s}</div>`; }
@@ -521,6 +526,10 @@ $('btnRefresh').onclick = async ()=>{
   await loadAll(true); toast('Data diperbarui');
 };
 
+function warnUnknown(){
+  const u = st.tree.unknown; if(!u.length || TAK_LABEL!==TAK) return;
+  banner(`<b>${u.length} file</b> tidak cocok dengan daftar kecamatan/desa dan dikelompokkan ke <b>${TAK}</b>. Contoh: ${u.slice(0,3).map(esc).join(' · ')}`, true);
+}
 function banner(html, err){ $('banner').innerHTML += `<div class="banner ${err?'err':''}">${html}</div>`; }
 let tT; function toast(html, ms=2800){ const t=$('toast'); t.innerHTML=html; t.classList.add('on'); clearTimeout(tT); if(ms) tT=setTimeout(()=>t.classList.remove('on'),ms); }
 
@@ -535,7 +544,7 @@ function demoTree(){
     const dn = rnd()<0.5 ? d.replace(/ /g,'_') : d; // variasi penulisan spasi → "_"
     for(let i=1;i<=n;i++) files.push({i:rid(), n:`A-KabKo-(${code++}) ${k}-${dn}_TPS ${i}.pdf`, s:150000+Math.floor(rnd()*400000), m:'application/pdf'});
   }));
-  files.push({i:rid(), n:'Rekap Model A (draft).pdf', s:90000, m:'application/pdf'});
+  files.push({i:rid(), n:'REKAP TPS KABUPATEN PACITAN.pdf', s:90000, m:'application/pdf'});
   return {i:'demo', n:APP_LABEL, f:[], d:files, builtAt:Date.now()};
 }
 
