@@ -71,6 +71,8 @@
   .fold:hover{border-color:var(--red);background:var(--red-50);transform:translateY(-1px)}
   .fold .ic{width:46px;height:46px;border-radius:11px;background:var(--red-50);color:var(--red);display:grid;place-items:center;flex:none}
   .fold .nm{font-weight:800;font-size:17.5px;line-height:1.25}
+  .fold.nil{opacity:.55;border-style:dashed}
+  .fold.tak{border-color:#e7b2b2;background:#fff6f6}
   .fold .sb{font-size:14.5px;color:var(--ink-3);margin-top:3px;font-weight:500}
 
   table{width:100%;border-collapse:collapse}
@@ -232,36 +234,71 @@ function fmtSize(b){ if(!b) return '–'; const u=['B','KB','MB','GB']; let i=0;
 function fmtDate(t){ return t? new Date(t).toLocaleString('id-ID',{dateStyle:'medium',timeStyle:'short'}) : '–'; }
 const norm = s => String(s||'').replace(/\s+/g,' ').trim().toUpperCase();
 
-/* ============ BACA NAMA FILE ============
-   Format: ...(kode) KECAMATAN-DESA_TPS n.pdf
-   Contoh: A-KabKo-(48611) DONOROJO-WIDORO_TPS 1.pdf → DONOROJO / WIDORO / TPS 1
-   (Rumus yang sama dipakai di Code.gs → parseNama_) */
-function parseNama(name){
+/* ===== REFERENSI WILAYAH (Kepmendagri 300.2.2-2138 Tahun 2025) — 12 kecamatan, 172 desa/kelurahan ===== */
+const WILAYAH = {
+  "ARJOSARI":["ARJOSARI", "BORANG", "GAYUHAN", "GEGERAN", "GEMBONG", "GUNUNGSARI", "JATIMALANG", "JETISKIDUL", "KARANGGEDE", "KARANGREJO", "KEDUNGBENDO", "MANGUNHARJO", "MLATI", "PAGUTAN", "SEDAYU", "TEMON", "TREMAS"],
+  "BANDAR":["BANDAR", "BANGUNSARI", "JERUK", "KLEDUNG", "NGUNUT", "PETUNGSINARANG", "TUMPUK", "WATUPATOK"],
+  "DONOROJO":["BELAH", "CEMENG", "DONOROJO", "GEDOMPOL", "GENDARAN", "KALAK", "KLEPU", "SAWAHAN", "SEKAR", "SENDANG", "SUKODONO", "WIDORO"],
+  "KEBONAGUNG":["BANJARJO", "GAWANG", "GEMBUK", "KALIPELUS", "KARANGANYAR", "KARANGNONGKO", "KATIPUGAL", "KEBONAGUNG", "KETEPUNG", "KETRO", "KLESEM", "MANTREN", "PLUMBUNGAN", "PUNJUNG", "PURWOASRI", "SANGGRAHAN", "SIDOMULYO", "WONOGONDO", "WORAWARI"],
+  "NAWANGAN":["GONDANG", "JETIS LOR", "MUJING", "NAWANGAN", "NGROMO", "PAKIS BARU", "PENGGUNG", "SEMPU", "TOKAWI"],
+  "NGADIROJO":["BODAG", "BOGOHARJO", "CANGKRING", "COKROKEMBANG", "HADILUWIH", "HADIWARNO", "NGADIROJO", "NOGOSARI", "PAGEREJO", "SIDOMULYO", "TANJUNGLOR", "TANJUNGPURO", "WIYORO", "WONOASRI", "WONODADI KULON", "WONODADI WETAN", "WONOKARTO", "WONOSOBO"],
+  "PACITAN":["ARJOWINANGUN", "BALEHARJO", "BANGUNSARI", "BANJARSARI", "BOLOSINGO", "KAYEN", "KEMBANG", "MENADI", "MENTORO", "NANGGUNGAN", "PACITAN", "PLOSO", "PONGGOK", "PUCANGSEWU", "PURWOREJO", "SAMBONG", "SEDENG", "SEMANTEN", "SIDOHARJO", "SIRNOBOYO", "SUKOHARJO", "SUMBERHARJO", "TAMBAKREJO", "TANJUNGSARI", "WIDORO"],
+  "PRINGKUKU":["CANDI", "DADAPAN", "DERSONO", "GLINGGANGAN", "JLUBANG", "NGADIREJAN", "PELEM", "POKO", "PRINGKUKU", "SOBO", "SUGIHWARAS", "TAMANASRI", "WATUKARUNG"],
+  "PUNUNG":["BOMO", "GONDOSARI", "KEBONSARI", "KENDAL", "MANTREN", "MENDOLO KIDUL", "MENDOLO LOR", "PITON", "PLOSO", "PUNUNG", "SOOKA", "TINATAR", "WARENG"],
+  "SUDIMORO":["GUNUNGREJO", "KARANGMULYO", "KETANGGUNG", "KLEPU", "PAGERKIDUL", "PAGERLOR", "SEMBOWO", "SUDIMORO", "SUKOREJO", "SUMBEREJO"],
+  "TEGALOMBO":["GEDANGAN", "GEMAHARJO", "KASIHAN", "KEBONDALEM", "KEMUNING", "NGRECO", "PLOSO", "PUCANGOMBO", "TAHUNAN", "TAHUNAN BARU", "TEGALOMBO"],
+  "TULAKAN":["BUBAKAN", "BUNGUR", "GASANG", "JATIGUNUNG", "JETAK", "KALIKUNING", "KETRO", "KETRO HARJO", "KLUWIH", "LOSARI", "NGILE", "NGLARAN", "NGUMBUL", "PADI", "TULAKAN", "WONOANTI", "WONOSIDI"]
+};
+
+/* ===== BACA NAMA FILE → Kecamatan / Desa / TPS =====
+   Dicocokkan ke daftar WILAYAH, jadi pemisah apa pun (- _ spasi) tetap terbaca benar.
+   Contoh: A-KabKo-(48611) DONOROJO-WIDORO_TPS 1.pdf       → DONOROJO / WIDORO / TPS 1
+           A-KabKo-(50001) TEGALOMBO-TAHUNAN_BARU_TPS 2.pdf → TEGALOMBO / TAHUNAN BARU / TPS 2  */
+const WIL_KEY_ = s => String(s||'').toUpperCase().replace(/[^A-Z0-9]+/g,'');
+const WIL_IDX_ = Object.keys(WILAYAH).sort((a,b)=>b.length-a.length).map(k=>({
+  k, kc:WIL_KEY_(k), d: WILAYAH[k].map(x=>({n:x, c:WIL_KEY_(x)})).sort((a,b)=>b.c.length-a.c.length)
+}));
+function cariDesa_(K, rest){
+  if(!rest) return '';
+  const ex = K.d.find(x=>x.c===rest); if(ex) return ex.n;
+  const pre = K.d.find(x=>rest.indexOf(x.c)===0); if(pre) return pre.n;
+  return '';
+}
+function parseWilayah(name, parentName){
   let b = String(name).replace(/\.[a-z0-9]{2,5}$/i,'');
   const p = b.lastIndexOf(')');
-  if(p >= 0) b = b.slice(p+1);
-  else b = b.replace(/^A[-_ ]?KabKo[-_ ]?/i,'');
-  b = b.trim();
-  const parts = b.split('_').map(s=>s.trim()).filter(Boolean);
-  let kec='', desa='', tps='';
-  if(parts.length >= 3){ kec=parts[0]; desa=parts[1]; tps=parts.slice(2).join(' '); }
-  else if(parts.length === 2){
-    tps = parts[1];
-    const w = parts[0], j = w.indexOf('-');
-    if(j > 0){ kec=w.slice(0,j); desa=w.slice(j+1); } else kec = w;
+  b = p>=0 ? b.slice(p+1) : b.replace(/^A[-_ ]?KAB[-_ ]?KO[-_ ]?/i,'');
+  let tps='', wil=b;
+  const re=/TPS[\s_\-.]*0*(\d+)/ig; let m, last=null;
+  while((m=re.exec(b))) last=m;
+  if(last){ tps='TPS '+last[1]; wil=b.slice(0,last.index); }
+  const W = WIL_KEY_(wil);
+  // 1) diawali nama kecamatan
+  for(const K of WIL_IDX_){
+    if(W.indexOf(K.kc)===0){ const desa=cariDesa_(K, W.slice(K.kc.length)); if(desa||W===K.kc) return {kec:K.k, desa, tps, ok:!!desa}; }
   }
-  return { kec:norm(kec), desa:norm(desa), tps:norm(tps) };
+  // 2) nama folder induk = kecamatan, nama file hanya berisi desa
+  const PK = WIL_KEY_(parentName);
+  for(const K of WIL_IDX_){
+    if(PK && PK.indexOf(K.kc)>=0){ const desa=cariDesa_(K, W) || cariDesa_(K, W.slice(K.kc.length)); if(desa) return {kec:K.k, desa, tps, ok:true}; }
+  }
+  // 3) gabungan kecamatan+desa ada di mana saja dalam nama
+  for(const K of WIL_IDX_) for(const D of K.d){ if(W.indexOf(K.kc+D.c)>=0) return {kec:K.k, desa:D.n, tps, ok:true}; }
+  return {kec:'', desa:'', tps, ok:false};
 }
 
-/* Susun ulang semua file menjadi Kecamatan → Desa/Kelurahan → TPS,
-   berdasarkan nama file (bukan susunan folder di Drive). */
+const TAK = 'TIDAK DIKENALI';
+/* Susun file menjadi Kecamatan → Desa/Kelurahan → TPS sesuai daftar WILAYAH.
+   Semua 172 desa/kelurahan tetap tampil (yang belum ada file-nya bertanda 0 TPS). */
 function buildVirtual(raw){
   const kecMap = new Map();
+  Object.keys(WILAYAH).forEach(k=>{ const dm=new Map(); WILAYAH[k].forEach(d=>dm.set(d,[])); kecMap.set(k,dm); });
+  const unknown=[];
   (function walk(n, parentName){
     n.d.forEach(f=>{
-      const x = parseNama(f.n);
-      const kec  = x.kec  || norm(parentName) || 'LAINNYA';
-      const desa = x.desa || 'LAINNYA';
+      const x = parseWilayah(f.n, parentName);
+      const kec = x.kec || TAK, desa = x.desa || TAK;
+      if(!x.ok) unknown.push(f.n);
       if(!kecMap.has(kec)) kecMap.set(kec, new Map());
       const dm = kecMap.get(kec);
       if(!dm.has(desa)) dm.set(desa, []);
@@ -272,25 +309,23 @@ function buildVirtual(raw){
 
   const node = (i,n,f,d) => ({i,n,f,d});
   const root = node('root', APP_LABEL, [], []);
-  root.builtAt = raw.builtAt; root.driveId = raw.i || ROOT_ID;
+  root.builtAt = raw.builtAt; root.driveId = raw.i || ROOT_ID; root.unknown = unknown;
   for(const [kec, dm] of kecMap){
-    const k = node('k|'+kec, kec, [], []);
-    k.kec = kec;
+    const k = node('k|'+kec, kec, [], []); k.kec = kec;
     for(const [desa, files] of dm){
       const d = node('d|'+kec+'|'+desa, desa, [], files.sort((a,b)=>coll.compare(a.tps,b.tps)||coll.compare(a.n,b.n)));
-      d.kec = kec; d.desa = desa;
-      k.f.push(d);
+      d.kec = kec; d.desa = desa; k.f.push(d);
     }
     root.f.push(k);
   }
   return finish(root);
 }
+function byName(a,b){ return (a.n===TAK)-(b.n===TAK) || coll.compare(a.n,b.n); }
 function finish(n){
-  n.f.sort((a,b)=>coll.compare(a.n,b.n));
+  n.f.sort(byName);
   n.f.forEach(finish);
   n.cnt  = n.d.length + n.f.reduce((a,c)=>a+c.cnt,0);
   n.size = n.d.reduce((a,c)=>a+(c.s||0),0) + n.f.reduce((a,c)=>a+c.size,0);
-  // folder Drive: jika semua file dalam satu folder, pakai folder itu
   const ps = new Set(); (function g(x){ x.d.forEach(f=>ps.add(f.p)); x.f.forEach(g); })(n);
   n.drive = ps.size===1 ? [...ps][0] : null;
   return n;
@@ -310,7 +345,7 @@ function setRaw(raw){ st.raw = raw; st.tree = buildVirtual(raw); }
 
 async function loadAll(refresh){
   $('banner').innerHTML='';
-  if(st.demo){ setRaw(demoTree()); banner('<b>Mode demo</b> — data contoh, bukan isi Drive sebenarnya. Isi URL Apps Script di Pengaturan untuk memakai data asli.'); fillKec(); render(); return; }
+  if(st.demo){ setRaw(demoTree()); if(st.tree.unknown.length) banner(`<b>${st.tree.unknown.length} file</b> tidak cocok dengan daftar kecamatan/desa dan dikelompokkan ke <b>${TAK}</b>. Contoh: ${st.tree.unknown.slice(0,3).map(esc).join(' · ')}`, true); banner('<b>Mode demo</b> — data contoh, bukan isi Drive sebenarnya. Isi URL Apps Script di Pengaturan untuk memakai data asli.'); fillKec(); render(); return; }
   if(!apiUrl()){ banner('Sumber data belum diatur. Klik <b>Pengaturan</b> untuk menempel URL Apps Script, atau coba <b>mode demo</b>.'); render(); return; }
   if(!refresh){ const c=lsGet(LS.tree); if(c){ try{ setRaw(JSON.parse(c)); fillKec(); render(); }catch(e){} } }
   if(!st.tree) renderLoading();
@@ -319,6 +354,7 @@ async function loadAll(refresh){
     lsSet(LS.tree, JSON.stringify(j.tree));
     setRaw(j.tree);
   }catch(e){ banner('Data gagal dimuat: '+esc(e.message)+'. Periksa URL Apps Script dan akses folder.', true); }
+  if(st.tree && st.tree.unknown.length) banner(`<b>${st.tree.unknown.length} file</b> tidak cocok dengan daftar kecamatan/desa dan dikelompokkan ke <b>${TAK}</b>. Contoh: ${st.tree.unknown.slice(0,3).map(esc).join(' · ')}`, true);
   fillKec(); render();
 }
 
@@ -336,12 +372,13 @@ function syncSide(){
   const kec = t && st.path[0] ? t.f.find(x=>x.i===st.path[0]) : null;
   if(kec){
     sd.disabled=false;
-    sd.innerHTML = `<option value="">— Semua Desa/Kelurahan (${kec.f.length}) —</option>`+kec.f.map(d=>`<option value="${esc(d.i)}">${esc(d.n)}</option>`).join('');
+    sd.innerHTML = `<option value="">— Semua Desa/Kelurahan (${kec.f.length}) —</option>`+kec.f.map(d=>`<option value="${esc(d.i)}">${esc(d.n)}${d.cnt?'':' (belum ada file)'}</option>`).join('');
     sd.value = st.path[1]||'';
   } else { sd.disabled=true; sd.innerHTML = '<option value="">— Pilih kecamatan dahulu —</option>'; }
   const cur = nodeAt(st.path) || t;
-  $('stKec').textContent  = t ? t.f.length : '–';
-  $('stDesa').textContent = t ? (kec ? kec.f.length : t.f.reduce((a,k)=>a+k.f.length,0)) : '–';
+  const real = x => x.n!==TAK;
+  $('stKec').textContent  = t ? t.f.filter(real).length : '–';
+  $('stDesa').textContent = t ? (kec ? kec.f.filter(real).length : t.f.filter(real).reduce((a,k)=>a+k.f.filter(real).length,0)) : '–';
   $('stFile').textContent = t ? cur.cnt.toLocaleString('id-ID') : '–';
   $('meta').innerHTML = t ? `Indeks diperbarui: ${fmtDate(t.builtAt)}<br>Sumber: folder Google Drive ${esc(APP_LABEL)}` : '';
 }
@@ -382,7 +419,7 @@ function render(){
   if(node.f.length){
     const lvl = st.path.length===0 ? 'Kecamatan' : 'Desa / Kelurahan';
     h += `<div class="sect"><h4>${lvl} (${node.f.length}) — klik untuk membuka</h4><div class="folders">`+
-      node.f.map(f=>`<div class="fold" data-go="${esc(f.i)}"><div class="ic">${st.path.length===0?ICON_FOLDER:ICON_PIN}</div><div><div class="nm">${esc(f.n)}</div><div class="sb">${f.f.length?f.f.length+' desa/kel · ':''}${f.cnt} TPS</div></div></div>`).join('')+
+      node.f.map(f=>`<div class="fold${f.cnt?'':' nil'}${f.n===TAK?' tak':''}" data-go="${esc(f.i)}"><div class="ic">${st.path.length===0?ICON_FOLDER:ICON_PIN}</div><div><div class="nm">${esc(f.n)}</div><div class="sb">${f.f.length?f.f.length+' desa/kel · ':''}${f.cnt} TPS</div></div></div>`).join('')+
       '</div></div>';
   }
   if(node.d.length) h += fileTable(node.d.map(f=>({f})));
@@ -417,7 +454,7 @@ function renderSearch(){
       walk(c,pid);
     });
     n.d.forEach(f=>{
-      const x = parseNama(f.n);
+      const x = parseWilayah(f.n, '');
       const hay = (x.kec+' '+x.desa+' '+f.tps).toUpperCase();
       if(words.every(w=>hit(hay,w))) res.push({f, path: x.desa ? x.desa : ''});
     });
@@ -489,19 +526,16 @@ let tT; function toast(html, ms=2800){ const t=$('toast'); t.innerHTML=html; t.c
 
 /* ============ DATA DEMO (format nama file asli) ============ */
 function demoTree(){
-  const kec={ 'ARJOSARI':['ARJOSARI','BORANG','GAYUHAN','GEMBONG'], 'BANDAR':['BANDAR','BANGUNSARI','JERUK'], 'DONOROJO':['DONOROJO','KALAK','SENDANG','WIDORO'],
-    'KEBONAGUNG':['KEBONAGUNG','KETEPUNG','SIDOMULYO'], 'NAWANGAN':['NAWANGAN','PAKISBARU'], 'NGADIROJO':['NGADIROJO','HADILUWIH','WIYORO'],
-    'PACITAN':['SIDOHARJO','PUCANGSEWU','PLOSO','BALEHARJO'], 'PRINGKUKU':['PRINGKUKU','WATUKARUNG'], 'PUNUNG':['PUNUNG','MANTREN'],
-    'SUDIMORO':['SUDIMORO','SUKOREJO'], 'TEGALOMBO':['TEGALOMBO','GEMAHARJO'], 'TULAKAN':['TULAKAN','KALIKUNING','WONOSIDI'] };
   let seed = APP_SRC==='pemilu'?7:3; const rnd=()=>((seed=(seed*9301+49297)%233280)/233280);
   const rid=()=>Math.random().toString(36).slice(2);
-  let code=48600;
-  // Semua file dalam satu folder (seperti mungkin di Drive) — wilayah dibaca dari nama file
-  const files=[];
-  Object.entries(kec).forEach(([k,ds])=>ds.forEach(d=>{
-    const n=3+Math.floor(rnd()*(APP_SRC==='pemilu'?9:5));
-    for(let i=1;i<=n;i++) files.push({i:rid(), n:`A-KabKo-(${code++}) ${k}-${d}_TPS ${i}.pdf`, s:150000+Math.floor(rnd()*400000), m:'application/pdf'});
+  let code=48600; const files=[];
+  Object.entries(WILAYAH).forEach(([k,ds])=>ds.forEach(d=>{
+    if(rnd()<0.08) return;                       // sebagian desa belum ada file
+    const n=2+Math.floor(rnd()*(APP_SRC==='pemilu'?10:6));
+    const dn = rnd()<0.5 ? d.replace(/ /g,'_') : d; // variasi penulisan spasi → "_"
+    for(let i=1;i<=n;i++) files.push({i:rid(), n:`A-KabKo-(${code++}) ${k}-${dn}_TPS ${i}.pdf`, s:150000+Math.floor(rnd()*400000), m:'application/pdf'});
   }));
+  files.push({i:rid(), n:'Rekap Model A (draft).pdf', s:90000, m:'application/pdf'});
   return {i:'demo', n:APP_LABEL, f:[], d:files, builtAt:Date.now()};
 }
 
